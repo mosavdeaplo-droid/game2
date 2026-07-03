@@ -1,0 +1,106 @@
+Build a complete multiplayer web game called "Guess Battle".
+
+Game concept:
+This is a 1v1 real-time guessing game where each player chooses a secret number between 1 and 100. The objective is to guess the opponent’s secret number before they guess yours.
+
+Core gameplay:
+
+* Player 1 creates a private room and gets a unique room code.
+* Player 2 joins using the room code.
+* Both players select a secret number between 1 and 100.
+* Once both confirm, the game starts.
+* The game is turn-based.
+* Each turn allows one guess.
+* The server responds with:
+
+  * "Higher" if the secret number is higher than the guess.
+  * "Lower" if the secret number is lower than the guess.
+  * "Correct" if the guess is right.
+* First player to guess correctly wins.
+
+Game rules:
+
+* Each turn has a 20-second timer.
+* If time runs out, the turn is skipped automatically.
+* After 3 skipped turns, the player loses.
+* Match format should be Best of 3 rounds.
+* Show round score in real time.
+
+UI requirements:
+Create a clean, modern, responsive UI.
+
+Pages:
+
+1. Home Page
+
+   * Play Now button
+   * Create Room button
+   * Join Room input
+   * Leaderboard
+   * Profile
+
+2. Lobby Page
+
+   * Room code display
+   * Waiting for opponent
+   * Secret number input
+   * Confirm button
+
+3. Game Page
+
+   * Timer
+   * Current turn indicator
+   * Guess input
+   * Guess button
+   * Guess history panel
+   * Hint/result display
+   * Round tracker
+   * Player names
+   * In-game chat
+
+Features:
+
+* Ranked system (Bronze, Silver, Gold, Platinum, Diamond)
+* Win/Loss tracking
+* Coins reward system
+* Player profile stats
+* Leaderboard
+* Themes and cosmetic rewards
+
+Security and anti-cheat:
+
+* Secret numbers must be stored server-side only.
+* Never expose opponent’s number in frontend.
+* Lock secret number after confirmation.
+* Validate all guesses server-side.
+* Prevent duplicate guesses in the same turn.
+* Add rate limiting (1 guess per second).
+* Secure rooms with random unique codes.
+* Add reconnect system (60 seconds timeout).
+* Add anti-spam protection for chat.
+* Add profanity filter for chat.
+
+Technical stack:
+Frontend: Next.js
+Backend: Node.js + Socket.io
+Database: MongoDB
+
+Architecture:
+
+* Use WebSockets for real-time communication.
+* Use JWT authentication.
+* Use hashed passwords.
+* Store match history and statistics.
+
+Design style:
+Dark modern gaming theme.
+Smooth animations.
+Responsive for desktop and mobile.
+Professional UX/UI.
+
+Important:
+Write clean scalable code.
+Separate frontend and backend properly.
+Optimize performance.
+Prevent common vulnerabilities.
+Make the game production-ready.

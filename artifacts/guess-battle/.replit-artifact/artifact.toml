@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Guess Battle"
+version = "1.0.0"
+id = "artifacts/guess-battle"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22425
+
+[services.development]
+run = "pnpm --filter @workspace/guess-battle run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/guess-battle", "run", "build" ]
+publicDir = "artifacts/guess-battle/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22425"
+BASE_PATH = "/"

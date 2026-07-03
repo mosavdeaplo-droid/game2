@@ -1,0 +1,177 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: players
+    description: Player profile and stats operations
+  - name: leaderboard
+    description: Leaderboard operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /players/register:
+    post:
+      operationId: registerPlayer
+      tags: [players]
+      summary: Register or resume a player
+      description: Creates a new player with the given username, or returns the existing player if the deviceId is already known.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlayerRegisterInput"
+      responses:
+        "200":
+          description: Player created or resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Player"
+  /players/{id}:
+    get:
+      operationId: getPlayer
+      tags: [players]
+      summary: Get a player's profile and stats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Player found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Player"
+        "404":
+          description: Player not found
+  /players/{id}/matches:
+    get:
+      operationId: getPlayerMatches
+      tags: [players]
+      summary: Get a player's recent match history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Recent matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Match"
+  /leaderboard:
+    get:
+      operationId: getLeaderboard
+      tags: [leaderboard]
+      summary: Get the top-ranked players
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Player"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    PlayerRegisterInput:
+      type: object
+      required: [username, deviceId]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 20
+        deviceId:
+          type: string
+          minLength: 1
+    Player:
+      type: object
+      required:
+        - id
+        - username
+        - wins
+        - losses
+        - coins
+        - rank
+        - gamesPlayed
+        - createdAt
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        wins:
+          type: integer
+        losses:
+          type: integer
+        coins:
+          type: integer
+        rank:
+          type: string
+          enum: [Bronze, Silver, Gold, Platinum, Diamond]
+        gamesPlayed:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    Match:
+      type: object
+      required:
+        - id
+        - opponentUsername
+        - result
+        - playerScore
+        - opponentScore
+        - createdAt
+      properties:
+        id:
+          type: string
+        opponentUsername:
+          type: string
+        result:
+          type: string
+          enum: [win, loss]
+        playerScore:
+          type: integer
+        opponentScore:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time

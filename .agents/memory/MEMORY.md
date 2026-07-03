@@ -1,0 +1,2 @@
+- [Socket.io on api-server](socketio-artifact-routing.md) — mount path, artifact.toml proxying, and always-restart-after-wiring gotcha for realtime servers in this monorepo.
+- [Tailwind v4 CSS @import ordering](tailwind-v4-css-import-order.md) — external font @import must be the very first line, even before `@import "tailwindcss"`.
