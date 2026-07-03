@@ -1,0 +1,9 @@
+[build]
+  base = "artifacts/guess-battle"
+  publish = "artifacts/guess-battle/dist/public"
+  command = "corepack enable && corepack prepare pnpm@10.26.1 --activate && cd ../.. && pnpm install --no-frozen-lockfile && pnpm --filter @workspace/guess-battle run build"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
