@@ -15,6 +15,12 @@ export type RoomStatus =
   | "round_over"
   | "match_over";
 
+export interface RoomSettings {
+  minNumber: number;
+  maxNumber: number;
+  roundsToWin: number;
+}
+
 export interface PublicRoom {
   code: string;
   status: RoomStatus;
@@ -22,6 +28,7 @@ export interface PublicRoom {
   currentTurnIndex: 0 | 1;
   turnEndsAt: number | null;
   players: [PublicPlayer | null, PublicPlayer | null];
+  settings: RoomSettings;
 }
 
 export interface GuessResultEvent {

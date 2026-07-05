@@ -10,9 +10,12 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ArrowLeft, Loader2, User as UserIcon } from "lucide-react";
 import { format } from "date-fns";
+import { useI18n } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function Profile() {
   const { id } = useParams();
+  const { t } = useI18n();
   const { data: player, isLoading: isLoadingPlayer } = useGetPlayer(id || "", {
     query: { enabled: !!id, queryKey: getGetPlayerQueryKey(id || "") },
   });
@@ -31,16 +34,16 @@ export default function Profile() {
   if (!player) {
     return (
       <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-background p-4 text-center">
-        <h1 className="text-2xl font-bold mb-4">Player Not Found</h1>
+        <h1 className="text-2xl font-bold mb-4">{t("profile.notFound")}</h1>
         <Link href="/">
-          <Button variant="outline">Return Home</Button>
+          <Button variant="outline">{t("profile.returnHome")}</Button>
         </Link>
       </div>
     );
   }
 
-  const winRate = player.gamesPlayed > 0 
-    ? Math.round((player.wins / player.gamesPlayed) * 100) 
+  const winRate = player.gamesPlayed > 0
+    ? Math.round((player.wins / player.gamesPlayed) * 100)
     : 0;
 
   return (
@@ -49,34 +52,35 @@ export default function Profile() {
         <Link href="/">
           <Button variant="ghost" size="icon"><ArrowLeft className="w-5 h-5" /></Button>
         </Link>
-        <h1 className="text-2xl font-black italic tracking-tight flex items-center gap-2 uppercase">
+        <h1 className="text-2xl font-black italic tracking-tight flex items-center gap-2 uppercase flex-1">
           <UserIcon className="w-6 h-6 text-primary" /> {player.username}
         </h1>
+        <LanguageSwitcher />
       </header>
 
       <main className="flex-1 p-4 flex flex-col gap-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card className="p-4 bg-card/50 flex flex-col items-center justify-center text-center">
-            <div className="text-sm font-mono text-muted-foreground mb-1">RANK</div>
+            <div className="text-sm font-mono text-muted-foreground mb-1">{t("profile.rank").toUpperCase()}</div>
             <div className="text-xl font-bold text-primary">{player.rank}</div>
           </Card>
           <Card className="p-4 bg-card/50 flex flex-col items-center justify-center text-center">
-            <div className="text-sm font-mono text-muted-foreground mb-1">WIN RATE</div>
+            <div className="text-sm font-mono text-muted-foreground mb-1">{t("profile.winRate").toUpperCase()}</div>
             <div className="text-xl font-bold">{winRate}%</div>
           </Card>
           <Card className="p-4 bg-card/50 flex flex-col items-center justify-center text-center">
-            <div className="text-sm font-mono text-muted-foreground mb-1">MATCHES</div>
+            <div className="text-sm font-mono text-muted-foreground mb-1">{t("profile.matches").toUpperCase()}</div>
             <div className="text-xl font-bold">{player.gamesPlayed}</div>
           </Card>
           <Card className="p-4 bg-card/50 flex flex-col items-center justify-center text-center">
-            <div className="text-sm font-mono text-muted-foreground mb-1">COINS</div>
+            <div className="text-sm font-mono text-muted-foreground mb-1">{t("profile.coins").toUpperCase()}</div>
             <div className="text-xl font-bold text-accent">{player.coins}</div>
           </Card>
         </div>
 
         <div className="space-y-4 flex-1 flex flex-col">
-          <h2 className="text-xl font-black italic">RECENT MATCHES</h2>
-          
+          <h2 className="text-xl font-black italic">{t("profile.recentMatches").toUpperCase()}</h2>
+
           <ScrollArea className="flex-1 bg-card/30 rounded-xl border border-border/50 p-4">
             {isLoadingMatches ? (
               <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
@@ -88,7 +92,7 @@ export default function Profile() {
                       <div className={`w-12 text-center font-black py-1 rounded
                         ${match.result === 'win' ? 'bg-primary/20 text-primary' : 'bg-destructive/20 text-destructive'}
                       `}>
-                        {match.result === 'win' ? 'WIN' : 'LOSS'}
+                        {match.result === 'win' ? t("profile.win") : t("profile.loss")}
                       </div>
                       <div>
                         <div className="font-bold">vs {match.opponentUsername}</div>
@@ -105,7 +109,7 @@ export default function Profile() {
               </div>
             ) : (
               <div className="text-center p-8 text-muted-foreground font-mono">
-                No matches played yet.
+                {t("profile.noMatches")}
               </div>
             )}
           </ScrollArea>

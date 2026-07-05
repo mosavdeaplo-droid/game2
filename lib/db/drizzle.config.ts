@@ -5,8 +5,15 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL, ensure the database is provisioned");
 }
 
+// Use forward slashes explicitly — drizzle-kit's internal glob matching
+// breaks on Windows-style backslash paths produced by path.join().
+const schemaPath = path
+  .join(__dirname, "./src/schema/index.ts")
+  .split(path.sep)
+  .join("/");
+
 export default defineConfig({
-  schema: path.join(__dirname, "./src/schema/index.ts"),
+  schema: schemaPath,
   dialect: "postgresql",
   dbCredentials: {
     url: process.env.DATABASE_URL,

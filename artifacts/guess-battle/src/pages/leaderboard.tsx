@@ -4,9 +4,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ArrowLeft, Loader2, Trophy } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function Leaderboard() {
   const { data: leaderboard, isLoading } = useGetLeaderboard();
+  const { t } = useI18n();
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground flex flex-col max-w-3xl mx-auto">
@@ -14,9 +17,10 @@ export default function Leaderboard() {
         <Link href="/">
           <Button variant="ghost" size="icon"><ArrowLeft className="w-5 h-5" /></Button>
         </Link>
-        <h1 className="text-2xl font-black italic tracking-tight flex items-center gap-2">
-          <Trophy className="w-6 h-6 text-primary" /> LEADERBOARD
+        <h1 className="text-2xl font-black italic tracking-tight flex items-center gap-2 flex-1">
+          <Trophy className="w-6 h-6 text-primary" /> {t("leaderboard.title").toUpperCase()}
         </h1>
+        <LanguageSwitcher />
       </header>
 
       <ScrollArea className="flex-1 p-4">
@@ -40,19 +44,19 @@ export default function Leaderboard() {
                     <div className="font-bold text-lg">{player.username}</div>
                     <div className="text-sm text-muted-foreground flex gap-3 font-mono">
                       <span>{player.rank}</span>
-                      <span className="text-primary">{player.wins} W</span>
-                      <span className="text-destructive">{player.losses} L</span>
+                      <span className="text-primary">{player.wins} {t("leaderboard.wins")}</span>
+                      <span className="text-destructive">{player.losses} {t("leaderboard.losses")}</span>
                     </div>
                   </div>
                   <div className="font-mono text-xl font-bold">
-                    {player.coins} <span className="text-primary text-sm">C</span>
+                    {player.coins} <span className="text-primary text-sm">{t("leaderboard.coins")}</span>
                   </div>
                 </Card>
               </Link>
             ))}
             {leaderboard?.length === 0 && (
               <div className="text-center p-12 text-muted-foreground font-mono">
-                No players ranked yet.
+                {t("leaderboard.empty")}
               </div>
             )}
           </div>

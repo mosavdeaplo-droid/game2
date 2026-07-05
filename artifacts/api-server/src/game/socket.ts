@@ -12,7 +12,7 @@ import {
   generateRoomCode,
   getRoom,
 } from "./rooms";
-import type { Room, RoomPlayer } from "./types";
+import type { Room, RoomPlayer, RoomSettings } from "./types";
 
 const TURN_SECONDS = 20;
 const MAX_SKIPS = 3;
@@ -22,6 +22,45 @@ const DISCONNECT_TIMEOUT_MS = 60_000;
 const CHAT_RATE_LIMIT_MS = 800;
 const WIN_COINS = 50;
 const LOSS_COINS = 10;
+
+// Safe bounds for custom room settings — prevents abuse (e.g. a 1-1 range
+// that makes guessing trivial, or a 999-round match that never ends).
+const MIN_ALLOWED_NUMBER = 1;
+const MAX_ALLOWED_NUMBER = 1000;
+const MIN_RANGE_WIDTH = 10; // smallest allowed (maxNumber - minNumber)
+const MIN_ROUNDS_TO_WIN = 1;
+const MAX_ROUNDS_TO_WIN = 5;
+
+function sanitizeRoomSettings(input: unknown): RoomSettings {
+  const raw = (input ?? {}) as Partial<RoomSettings>;
+
+  let minNumber = Number.isInteger(raw.minNumber) ? raw.minNumber! : 1;
+  let maxNumber = Number.isInteger(raw.maxNumber) ? raw.maxNumber! : 100;
+  let roundsToWin = Number.isInteger(raw.roundsToWin)
+    ? raw.roundsToWin!
+    : ROUNDS_TO_WIN;
+
+  minNumber = Math.min(
+    Math.max(minNumber, MIN_ALLOWED_NUMBER),
+    MAX_ALLOWED_NUMBER,
+  );
+  maxNumber = Math.min(
+    Math.max(maxNumber, MIN_ALLOWED_NUMBER),
+    MAX_ALLOWED_NUMBER,
+  );
+
+  if (maxNumber - minNumber < MIN_RANGE_WIDTH) {
+    maxNumber = Math.min(minNumber + MIN_RANGE_WIDTH, MAX_ALLOWED_NUMBER);
+    minNumber = maxNumber - MIN_RANGE_WIDTH;
+  }
+
+  roundsToWin = Math.min(
+    Math.max(roundsToWin, MIN_ROUNDS_TO_WIN),
+    MAX_ROUNDS_TO_WIN,
+  );
+
+  return { minNumber, maxNumber, roundsToWin };
+}
 
 const chatLastSentAt = new Map<string, number>();
 
@@ -45,6 +84,7 @@ function publicRoom(room: Room) {
     currentTurnIndex: room.currentTurnIndex,
     turnEndsAt: room.turnEndsAt,
     players: room.players.map((p) => (p ? publicPlayer(p) : null)),
+    settings: room.settings,
   };
 }
 
@@ -116,7 +156,7 @@ export function attachGameServer(httpServer: HttpServer): Server {
       scores: [room.players[0]?.roundsWon ?? 0, room.players[1]?.roundsWon ?? 0],
     });
 
-    if (winner.roundsWon >= ROUNDS_TO_WIN) {
+    if (winner.roundsWon >= room.settings.roundsToWin) {
       room.status = "match_over";
       const loserIndex = otherIndex(winnerIndex);
       const loser = room.players[loserIndex];
@@ -214,10 +254,15 @@ export function attachGameServer(httpServer: HttpServer): Server {
     socket.on(
       "room:create",
       (
-        payload: { username: string; deviceId: string; playerId: string },
+        payload: {
+          username: string;
+          deviceId: string;
+          playerId: string;
+          settings?: Partial<RoomSettings>;
+        },
         ack?: (res: unknown) => void,
       ) => {
-        const { username, deviceId, playerId } = payload ?? {};
+        const { username, deviceId, playerId, settings } = payload ?? {};
         if (!username || !deviceId || !playerId) {
           ack?.({ success: false, error: "Missing player info" });
           return;
@@ -250,6 +295,7 @@ export function attachGameServer(httpServer: HttpServer): Server {
           disconnectTimers: {},
           chat: [],
           lastGuessAt: {},
+          settings: sanitizeRoomSettings(settings),
         };
 
         createRoom(room);
@@ -362,8 +408,16 @@ export function attachGameServer(httpServer: HttpServer): Server {
           return;
         }
         const secret = Number(payload?.secret);
-        if (!Number.isInteger(secret) || secret < 1 || secret > 100) {
-          ack?.({ success: false, error: "Secret must be between 1 and 100" });
+        const { minNumber, maxNumber } = room.settings;
+        if (
+          !Number.isInteger(secret) ||
+          secret < minNumber ||
+          secret > maxNumber
+        ) {
+          ack?.({
+            success: false,
+            error: `Secret must be between ${minNumber} and ${maxNumber}`,
+          });
           return;
         }
         player.secret = secret;
@@ -409,8 +463,16 @@ export function attachGameServer(httpServer: HttpServer): Server {
         room.lastGuessAt[player.deviceId] = now;
 
         const guess = Number(payload?.guess);
-        if (!Number.isInteger(guess) || guess < 1 || guess > 100) {
-          ack?.({ success: false, error: "Guess must be between 1 and 100" });
+        const { minNumber: guessMin, maxNumber: guessMax } = room.settings;
+        if (
+          !Number.isInteger(guess) ||
+          guess < guessMin ||
+          guess > guessMax
+        ) {
+          ack?.({
+            success: false,
+            error: `Guess must be between ${guessMin} and ${guessMax}`,
+          });
           return;
         }
 

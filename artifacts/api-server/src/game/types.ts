@@ -30,6 +30,12 @@ export type RoomStatus =
   | "round_over"
   | "match_over";
 
+export interface RoomSettings {
+  minNumber: number;
+  maxNumber: number;
+  roundsToWin: number;
+}
+
 export interface Room {
   code: string;
   createdAt: number;
@@ -42,4 +48,5 @@ export interface Room {
   disconnectTimers: Partial<Record<string, ReturnType<typeof setTimeout>>>;
   chat: ChatEntry[];
   lastGuessAt: Partial<Record<string, number>>;
+  settings: RoomSettings;
 }

@@ -14,6 +14,7 @@ import type {
   GuessResultEvent,
   MatchEndEvent,
   PublicRoom,
+  RoomSettings,
   RoundEndEvent,
   SkipEvent,
   TurnEvent,
@@ -41,7 +42,7 @@ interface GameState {
 
 interface GameContextValue extends GameState {
   setIdentity: (identity: Identity) => void;
-  createRoom: () => Promise<AckResponse>;
+  createRoom: (settings?: Partial<RoomSettings>) => Promise<AckResponse>;
   joinRoom: (roomCode: string) => Promise<AckResponse>;
   rejoinRoom: (roomCode: string) => Promise<AckResponse>;
   setSecret: (secret: number) => Promise<AckResponse>;
@@ -126,20 +127,28 @@ export function GameProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const createRoom = useCallback((): Promise<AckResponse> => {
-    return new Promise((resolve) => {
-      const id = identityRef.current;
-      if (!id) {
-        resolve({ success: false, error: "No identity set" });
-        return;
-      }
-      getSocket().emit(
-        "room:create",
-        { username: id.username, deviceId: id.deviceId, playerId: id.playerId },
-        (res: AckResponse) => resolve(res),
-      );
-    });
-  }, []);
+  const createRoom = useCallback(
+    (settings?: Partial<RoomSettings>): Promise<AckResponse> => {
+      return new Promise((resolve) => {
+        const id = identityRef.current;
+        if (!id) {
+          resolve({ success: false, error: "No identity set" });
+          return;
+        }
+        getSocket().emit(
+          "room:create",
+          {
+            username: id.username,
+            deviceId: id.deviceId,
+            playerId: id.playerId,
+            settings,
+          },
+          (res: AckResponse) => resolve(res),
+        );
+      });
+    },
+    [],
+  );
 
   const joinRoom = useCallback((roomCode: string): Promise<AckResponse> => {
     return new Promise((resolve) => {
