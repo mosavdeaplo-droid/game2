@@ -11,6 +11,8 @@ import { getSocket } from "./socket";
 import type {
   AckResponse,
   ChatMessageEvent,
+  ChooseTargetPromptEvent,
+  EliminatedEvent,
   GuessResultEvent,
   MatchEndEvent,
   PublicRoom,
@@ -29,13 +31,15 @@ interface Identity {
 interface GameState {
   identity: Identity | null;
   room: PublicRoom | null;
-  myIndex: 0 | 1 | null;
+  myIndex: number | null;
   guessLog: GuessResultEvent[];
   chat: ChatMessageEvent[];
   lastRoundEnd: RoundEndEvent | null;
   lastMatchEnd: MatchEndEvent | null;
   lastSkip: SkipEvent | null;
+  lastEliminated: EliminatedEvent | null;
   turn: TurnEvent | null;
+  chooseTargetPrompt: ChooseTargetPromptEvent | null;
   opponentLeft: boolean;
   connected: boolean;
 }
@@ -46,6 +50,7 @@ interface GameContextValue extends GameState {
   joinRoom: (roomCode: string) => Promise<AckResponse>;
   rejoinRoom: (roomCode: string) => Promise<AckResponse>;
   setSecret: (secret: number) => Promise<AckResponse>;
+  chooseTarget: (targetIndex: number) => Promise<AckResponse>;
   guess: (value: number) => Promise<AckResponse>;
   sendChat: (message: string) => void;
   leaveRoom: () => void;
@@ -73,7 +78,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [lastRoundEnd, setLastRoundEnd] = useState<RoundEndEvent | null>(null);
   const [lastMatchEnd, setLastMatchEnd] = useState<MatchEndEvent | null>(null);
   const [lastSkip, setLastSkip] = useState<SkipEvent | null>(null);
+  const [lastEliminated, setLastEliminated] = useState<EliminatedEvent | null>(null);
   const [turn, setTurn] = useState<TurnEvent | null>(null);
+  const [chooseTargetPrompt, setChooseTargetPrompt] =
+    useState<ChooseTargetPromptEvent | null>(null);
   const [opponentLeft, setOpponentLeft] = useState(false);
   const [connected, setConnected] = useState(false);
   const identityRef = useRef<Identity | null>(null);
@@ -99,7 +107,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
     };
     const onMatchEnd = (payload: MatchEndEvent) => setLastMatchEnd(payload);
     const onSkip = (payload: SkipEvent) => setLastSkip(payload);
-    const onTurn = (payload: TurnEvent) => setTurn(payload);
+    const onEliminated = (payload: EliminatedEvent) => setLastEliminated(payload);
+    const onTurn = (payload: TurnEvent) => {
+      setTurn(payload);
+      setChooseTargetPrompt(null);
+    };
+    const onChooseTargetPrompt = (payload: ChooseTargetPromptEvent) => {
+      setChooseTargetPrompt(payload);
+      setTurn(null);
+    };
     const onOpponentLeft = () => setOpponentLeft(true);
 
     socket.on("connect", onConnect);
@@ -110,7 +126,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     socket.on("game:roundEnd", onRoundEnd);
     socket.on("game:matchEnd", onMatchEnd);
     socket.on("game:skip", onSkip);
+    socket.on("game:eliminated", onEliminated);
     socket.on("game:turn", onTurn);
+    socket.on("game:chooseTargetPrompt", onChooseTargetPrompt);
     socket.on("room:opponentLeft", onOpponentLeft);
 
     return () => {
@@ -122,7 +140,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
       socket.off("game:roundEnd", onRoundEnd);
       socket.off("game:matchEnd", onMatchEnd);
       socket.off("game:skip", onSkip);
+      socket.off("game:eliminated", onEliminated);
       socket.off("game:turn", onTurn);
+      socket.off("game:chooseTargetPrompt", onChooseTargetPrompt);
       socket.off("room:opponentLeft", onOpponentLeft);
     };
   }, []);
@@ -200,6 +220,24 @@ export function GameProvider({ children }: { children: ReactNode }) {
     });
   }, [room]);
 
+  const chooseTarget = useCallback(
+    (targetIndex: number): Promise<AckResponse> => {
+      return new Promise((resolve) => {
+        const roomCode = room?.code;
+        if (!roomCode) {
+          resolve({ success: false, error: "Not in a room" });
+          return;
+        }
+        getSocket().emit(
+          "game:chooseTarget",
+          { roomCode, targetIndex },
+          (res: AckResponse) => resolve(res),
+        );
+      });
+    },
+    [room],
+  );
+
   const guess = useCallback((value: number): Promise<AckResponse> => {
     return new Promise((resolve) => {
       const roomCode = room?.code;
@@ -232,7 +270,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setLastRoundEnd(null);
     setLastMatchEnd(null);
     setLastSkip(null);
+    setLastEliminated(null);
     setTurn(null);
+    setChooseTargetPrompt(null);
     setOpponentLeft(false);
   }, [room]);
 
@@ -242,10 +282,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setOpponentLeft(false);
   }, []);
 
-  const myIndex: 0 | 1 | null = (() => {
+  const myIndex: number | null = (() => {
     if (!room || !identity) return null;
     const idx = room.players.findIndex((p) => p?.playerId === identity.playerId);
-    return idx === 0 || idx === 1 ? idx : null;
+    return idx === -1 ? null : idx;
   })();
 
   const value: GameContextValue = {
@@ -257,7 +297,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     lastRoundEnd,
     lastMatchEnd,
     lastSkip,
+    lastEliminated,
     turn,
+    chooseTargetPrompt,
     opponentLeft,
     connected,
     setIdentity,
@@ -265,6 +307,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     joinRoom,
     rejoinRoom,
     setSecret,
+    chooseTarget,
     guess,
     sendChat,
     leaveRoom,

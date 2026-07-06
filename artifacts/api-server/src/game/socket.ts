@@ -12,9 +12,10 @@ import {
   generateRoomCode,
   getRoom,
 } from "./rooms";
-import type { Room, RoomPlayer, RoomSettings } from "./types";
+import type { Room, RoomMode, RoomPlayer, RoomSettings } from "./types";
 
 const TURN_SECONDS = 20;
+const TARGET_CHOICE_SECONDS = 10;
 const MAX_SKIPS = 3;
 const ROUNDS_TO_WIN = 2;
 const GUESS_RATE_LIMIT_MS = 1000;
@@ -23,11 +24,9 @@ const CHAT_RATE_LIMIT_MS = 800;
 const WIN_COINS = 50;
 const LOSS_COINS = 10;
 
-// Safe bounds for custom room settings — prevents abuse (e.g. a 1-1 range
-// that makes guessing trivial, or a 999-round match that never ends).
 const MIN_ALLOWED_NUMBER = 1;
 const MAX_ALLOWED_NUMBER = 1000;
-const MIN_RANGE_WIDTH = 10; // smallest allowed (maxNumber - minNumber)
+const MIN_RANGE_WIDTH = 10;
 const MIN_ROUNDS_TO_WIN = 1;
 const MAX_ROUNDS_TO_WIN = 5;
 
@@ -59,7 +58,14 @@ function sanitizeRoomSettings(input: unknown): RoomSettings {
     MAX_ROUNDS_TO_WIN,
   );
 
-  return { minNumber, maxNumber, roundsToWin };
+  const rawMaxPlayers = Number(raw.maxPlayers);
+  const maxPlayers: 2 | 3 | 4 =
+    rawMaxPlayers === 3 ? 3 : rawMaxPlayers === 4 ? 4 : 2;
+
+  const rawMode: RoomMode = raw.mode === "teams" ? "teams" : "ffa";
+  const mode: RoomMode = rawMode === "teams" && maxPlayers === 4 ? "teams" : "ffa";
+
+  return { minNumber, maxNumber, roundsToWin, maxPlayers, mode };
 }
 
 const chatLastSentAt = new Map<string, number>();
@@ -73,6 +79,8 @@ function publicPlayer(p: RoomPlayer) {
     hasSecret: p.secret !== null,
     skipsUsed: p.skipsUsed,
     roundsWon: p.roundsWon,
+    team: p.team,
+    alive: p.alive,
   };
 }
 
@@ -82,14 +90,85 @@ function publicRoom(room: Room) {
     status: room.status,
     round: room.round,
     currentTurnIndex: room.currentTurnIndex,
+    targetIndex: room.targetIndex,
     turnEndsAt: room.turnEndsAt,
     players: room.players.map((p) => (p ? publicPlayer(p) : null)),
     settings: room.settings,
   };
 }
 
-function otherIndex(i: 0 | 1): 0 | 1 {
-  return i === 0 ? 1 : 0;
+function makePlayer(
+  socketId: string,
+  deviceId: string,
+  playerId: string,
+  username: string,
+  team: 0 | 1 | null,
+): RoomPlayer {
+  return {
+    socketId,
+    deviceId,
+    playerId,
+    username,
+    secret: null,
+    ready: false,
+    connected: true,
+    skipsUsed: 0,
+    guesses: [],
+    roundsWon: 0,
+    team,
+    alive: true,
+  };
+}
+
+function teamForSeat(mode: RoomMode, seatIndex: number): 0 | 1 | null {
+  if (mode !== "teams") return null;
+  return (seatIndex % 2) as 0 | 1;
+}
+
+function getValidTargets(room: Room, fromIndex: number): number[] {
+  const me = room.players[fromIndex];
+  if (!me) return [];
+  const targets: number[] = [];
+  room.players.forEach((p, i) => {
+    if (!p || i === fromIndex || !p.alive) return;
+    if (room.settings.mode === "teams" && p.team === me.team) return;
+    targets.push(i);
+  });
+  return targets;
+}
+
+function findNextAliveIndex(room: Room, fromIndex: number): number | null {
+  const n = room.players.length;
+  for (let step = 1; step <= n; step++) {
+    const idx = (fromIndex + step) % n;
+    const p = room.players[idx];
+    if (p && p.alive) return idx;
+  }
+  return null;
+}
+
+type RoundWinner =
+  | { kind: "player"; index: number }
+  | { kind: "team"; team: 0 | 1 };
+
+function checkRoundWinner(room: Room): RoundWinner | null {
+  const alive = room.players
+    .map((p, i) => ({ p, i }))
+    .filter((x) => x.p && x.p.alive);
+
+  if (room.settings.mode === "teams") {
+    const aliveTeams = new Set(alive.map((x) => x.p!.team));
+    if (aliveTeams.size === 1) {
+      const team = alive[0]?.p?.team;
+      if (team === 0 || team === 1) return { kind: "team", team };
+    }
+    return null;
+  }
+
+  if (alive.length === 1) {
+    return { kind: "player", index: alive[0]!.i };
+  }
+  return null;
 }
 
 export function attachGameServer(httpServer: HttpServer): Server {
@@ -109,20 +188,63 @@ export function attachGameServer(httpServer: HttpServer): Server {
     }
   }
 
-  function startTurn(room: Room) {
+  function beginTurn(room: Room) {
     clearTurnTimer(room);
+    const validTargets = getValidTargets(room, room.currentTurnIndex);
+
+    if (validTargets.length === 0) {
+      logger.error({ roomCode: room.code }, "beginTurn: no valid targets");
+      return;
+    }
+
+    if (validTargets.length === 1) {
+      room.targetIndex = validTargets[0]!;
+      startPlayingPhase(room);
+      return;
+    }
+
+    room.status = "choosing_target";
+    room.targetIndex = null;
+    room.turnEndsAt = Date.now() + TARGET_CHOICE_SECONDS * 1000;
+    io.to(room.code).emit("game:chooseTargetPrompt", {
+      currentTurnIndex: room.currentTurnIndex,
+      turnEndsAt: room.turnEndsAt,
+      validTargets,
+      round: room.round,
+    });
+    broadcastRoom(room);
+    room.turnTimer = setTimeout(
+      () => handleTargetTimeout(room),
+      TARGET_CHOICE_SECONDS * 1000,
+    );
+  }
+
+  function startPlayingPhase(room: Room) {
+    clearTurnTimer(room);
+    room.status = "playing";
     room.turnEndsAt = Date.now() + TURN_SECONDS * 1000;
     io.to(room.code).emit("game:turn", {
       currentTurnIndex: room.currentTurnIndex,
+      targetIndex: room.targetIndex,
       turnEndsAt: room.turnEndsAt,
       round: room.round,
     });
-    room.turnTimer = setTimeout(() => {
-      handleTurnTimeout(room);
-    }, TURN_SECONDS * 1000);
+    broadcastRoom(room);
+    room.turnTimer = setTimeout(
+      () => handleGuessTimeout(room),
+      TURN_SECONDS * 1000,
+    );
   }
 
-  function handleTurnTimeout(room: Room) {
+  function handleTargetTimeout(room: Room) {
+    const validTargets = getValidTargets(room, room.currentTurnIndex);
+    if (validTargets.length === 0) return;
+    room.targetIndex =
+      validTargets[Math.floor(Math.random() * validTargets.length)]!;
+    startPlayingPhase(room);
+  }
+
+  function handleGuessTimeout(room: Room) {
     const player = room.players[room.currentTurnIndex];
     if (!player) return;
     player.skipsUsed += 1;
@@ -132,58 +254,73 @@ export function attachGameServer(httpServer: HttpServer): Server {
     });
 
     if (player.skipsUsed >= MAX_SKIPS) {
-      void endRound(room, otherIndex(room.currentTurnIndex), "skips");
-      return;
+      player.alive = false;
+      io.to(room.code).emit("game:eliminated", {
+        playerIndex: room.currentTurnIndex,
+        reason: "skips",
+      });
+      const winner = checkRoundWinner(room);
+      if (winner) {
+        void finishRound(room, winner);
+        return;
+      }
     }
 
-    room.currentTurnIndex = otherIndex(room.currentTurnIndex);
-    startTurn(room);
+    const next = findNextAliveIndex(room, room.currentTurnIndex);
+    if (next === null) return;
+    room.currentTurnIndex = next;
+    beginTurn(room);
   }
 
-  async function endRound(
-    room: Room,
-    winnerIndex: 0 | 1,
-    reason: "correct" | "skips",
-  ) {
+  async function finishRound(room: Room, winner: RoundWinner) {
     clearTurnTimer(room);
-    const winner = room.players[winnerIndex];
-    if (!winner) return;
-    winner.roundsWon += 1;
 
-    io.to(room.code).emit("game:roundEnd", {
-      winnerIndex,
-      reason,
-      scores: [room.players[0]?.roundsWon ?? 0, room.players[1]?.roundsWon ?? 0],
-    });
+    const winnerIndices: number[] =
+      winner.kind === "player"
+        ? [winner.index]
+        : room.players
+            .map((p, i) => (p && p.team === winner.team ? i : -1))
+            .filter((i) => i !== -1);
 
-    if (winner.roundsWon >= room.settings.roundsToWin) {
+    for (const i of winnerIndices) {
+      const p = room.players[i];
+      if (p) p.roundsWon += 1;
+    }
+
+    const scores = room.players.map((p) => p?.roundsWon ?? 0);
+    io.to(room.code).emit("game:roundEnd", { winnerIndices, scores });
+
+    const matchOver = winnerIndices.some(
+      (i) => (room.players[i]?.roundsWon ?? 0) >= room.settings.roundsToWin,
+    );
+
+    if (matchOver) {
       room.status = "match_over";
-      const loserIndex = otherIndex(winnerIndex);
-      const loser = room.players[loserIndex];
+      io.to(room.code).emit("game:matchEnd", { winnerIndices, scores });
 
-      io.to(room.code).emit("game:matchEnd", {
-        winnerIndex,
-        scores: [
-          room.players[0]?.roundsWon ?? 0,
-          room.players[1]?.roundsWon ?? 0,
-        ],
-      });
-
-      if (winner && loser) {
-        await persistMatchResult(room, winner, loser);
+      if (room.settings.maxPlayers === 2) {
+        const winnerPlayer = room.players[winnerIndices[0]!];
+        const loserIndex = winnerIndices[0] === 0 ? 1 : 0;
+        const loserPlayer = room.players[loserIndex];
+        if (winnerPlayer && loserPlayer) {
+          await persistMatchResult(room, winnerPlayer, loserPlayer);
+        }
       }
+
       broadcastRoom(room);
       return;
     }
 
     room.round += 1;
     room.status = "picking";
+    room.targetIndex = null;
     for (const p of room.players) {
       if (p) {
         p.secret = null;
         p.ready = false;
         p.guesses = [];
         p.skipsUsed = 0;
+        p.alive = true;
       }
     }
     broadcastRoom(room);
@@ -268,34 +405,33 @@ export function attachGameServer(httpServer: HttpServer): Server {
           return;
         }
 
+        const sanitized = sanitizeRoomSettings(settings);
         const code = generateRoomCode();
+        const players: (RoomPlayer | null)[] = new Array(
+          sanitized.maxPlayers,
+        ).fill(null);
+        players[0] = makePlayer(
+          socket.id,
+          deviceId,
+          playerId,
+          username,
+          teamForSeat(sanitized.mode, 0),
+        );
+
         const room: Room = {
           code,
           createdAt: Date.now(),
           status: "waiting",
-          players: [
-            {
-              socketId: socket.id,
-              deviceId,
-              playerId,
-              username,
-              secret: null,
-              ready: false,
-              connected: true,
-              skipsUsed: 0,
-              guesses: [],
-              roundsWon: 0,
-            },
-            null,
-          ],
+          players,
           round: 1,
           currentTurnIndex: 0,
+          targetIndex: null,
           turnEndsAt: null,
           turnTimer: null,
           disconnectTimers: {},
           chat: [],
           lastGuessAt: {},
-          settings: sanitizeRoomSettings(settings),
+          settings: sanitized,
         };
 
         createRoom(room);
@@ -322,24 +458,38 @@ export function attachGameServer(httpServer: HttpServer): Server {
           ack?.({ success: false, error: "Room not found" });
           return;
         }
-        if (room.players[1] && room.players[1].deviceId !== deviceId) {
+
+        const existingIdx = room.players.findIndex(
+          (p) => p?.deviceId === deviceId,
+        );
+        if (existingIdx !== -1) {
+          const p = room.players[existingIdx]!;
+          p.socketId = socket.id;
+          p.connected = true;
+          socket.join(room.code);
+          ack?.({ success: true, roomCode: room.code });
+          broadcastRoom(room);
+          return;
+        }
+
+        const emptyIdx = room.players.findIndex((p) => p === null);
+        if (emptyIdx === -1) {
           ack?.({ success: false, error: "Room is full" });
           return;
         }
 
-        room.players[1] = {
-          socketId: socket.id,
+        room.players[emptyIdx] = makePlayer(
+          socket.id,
           deviceId,
           playerId,
           username,
-          secret: null,
-          ready: false,
-          connected: true,
-          skipsUsed: 0,
-          guesses: [],
-          roundsWon: 0,
-        };
-        room.status = "picking";
+          teamForSeat(room.settings.mode, emptyIdx),
+        );
+
+        const isFull = room.players.every((p) => p !== null);
+        if (isFull) {
+          room.status = "picking";
+        }
 
         socket.join(room.code);
         ack?.({ success: true, roomCode: room.code });
@@ -364,7 +514,7 @@ export function attachGameServer(httpServer: HttpServer): Server {
           ack?.({ success: false, error: "Not a member of this room" });
           return;
         }
-        const player = room.players[idx as 0 | 1];
+        const player = room.players[idx];
         if (!player) return;
         player.socketId = socket.id;
         player.connected = true;
@@ -376,10 +526,19 @@ export function attachGameServer(httpServer: HttpServer): Server {
         socket.join(room.code);
         ack?.({ success: true, roomCode: room.code });
         broadcastRoom(room);
+
         if (room.status === "playing" && room.turnEndsAt) {
           socket.emit("game:turn", {
             currentTurnIndex: room.currentTurnIndex,
+            targetIndex: room.targetIndex,
             turnEndsAt: room.turnEndsAt,
+            round: room.round,
+          });
+        } else if (room.status === "choosing_target" && room.turnEndsAt) {
+          socket.emit("game:chooseTargetPrompt", {
+            currentTurnIndex: room.currentTurnIndex,
+            turnEndsAt: room.turnEndsAt,
+            validTargets: getValidTargets(room, room.currentTurnIndex),
             round: room.round,
           });
         }
@@ -392,7 +551,8 @@ export function attachGameServer(httpServer: HttpServer): Server {
         payload: { roomCode: string; secret: number },
         ack?: (res: unknown) => void,
       ) => {
-        const room = findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
+        const room =
+          findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
         if (!room) {
           ack?.({ success: false, error: "Room not found" });
           return;
@@ -402,7 +562,7 @@ export function attachGameServer(httpServer: HttpServer): Server {
           ack?.({ success: false, error: "Not in this room" });
           return;
         }
-        const player = room.players[idx as 0 | 1];
+        const player = room.players[idx];
         if (!player || player.ready) {
           ack?.({ success: false, error: "Secret already locked" });
           return;
@@ -425,13 +585,40 @@ export function attachGameServer(httpServer: HttpServer): Server {
         ack?.({ success: true });
         broadcastRoom(room);
 
-        const [p1, p2] = room.players;
-        if (p1?.ready && p2?.ready && room.status === "picking") {
-          room.status = "playing";
-          room.currentTurnIndex = 0;
-          broadcastRoom(room);
-          startTurn(room);
+        const allReady = room.players.every((p) => p === null || p.ready);
+        if (allReady && room.status === "picking") {
+          room.currentTurnIndex = findNextAliveIndex(room, -1) ?? 0;
+          beginTurn(room);
         }
+      },
+    );
+
+    socket.on(
+      "game:chooseTarget",
+      (
+        payload: { roomCode: string; targetIndex: number },
+        ack?: (res: unknown) => void,
+      ) => {
+        const room =
+          findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
+        if (!room || room.status !== "choosing_target") {
+          ack?.({ success: false, error: "Not choosing a target right now" });
+          return;
+        }
+        const idx = room.players.findIndex((p) => p?.socketId === socket.id);
+        if (idx !== room.currentTurnIndex) {
+          ack?.({ success: false, error: "Not your turn" });
+          return;
+        }
+        const validTargets = getValidTargets(room, idx);
+        const targetIndex = Number(payload?.targetIndex);
+        if (!validTargets.includes(targetIndex)) {
+          ack?.({ success: false, error: "Invalid target" });
+          return;
+        }
+        room.targetIndex = targetIndex;
+        ack?.({ success: true });
+        startPlayingPhase(room);
       },
     );
 
@@ -441,7 +628,8 @@ export function attachGameServer(httpServer: HttpServer): Server {
         payload: { roomCode: string; guess: number },
         ack?: (res: unknown) => void,
       ) => {
-        const room = findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
+        const room =
+          findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
         if (!room || room.status !== "playing") {
           ack?.({ success: false, error: "Game not in progress" });
           return;
@@ -451,8 +639,15 @@ export function attachGameServer(httpServer: HttpServer): Server {
           ack?.({ success: false, error: "Not your turn" });
           return;
         }
-        const player = room.players[idx as 0 | 1];
+        const player = room.players[idx];
         if (!player) return;
+
+        const targetIdx = room.targetIndex;
+        const target = targetIdx !== null ? room.players[targetIdx] : null;
+        if (targetIdx === null || !target || target.secret === null) {
+          ack?.({ success: false, error: "Target not ready" });
+          return;
+        }
 
         const now = Date.now();
         const last = room.lastGuessAt[player.deviceId] ?? 0;
@@ -476,47 +671,63 @@ export function attachGameServer(httpServer: HttpServer): Server {
           return;
         }
 
-        if (player.guesses.some((g) => g.guess === guess && g.turn === room.round)) {
-          ack?.({ success: false, error: "Already guessed that number this round" });
-          return;
-        }
-
-        const opponent = room.players[otherIndex(idx as 0 | 1)];
-        if (!opponent || opponent.secret === null) {
-          ack?.({ success: false, error: "Opponent not ready" });
+        if (
+          player.guesses.some(
+            (g) =>
+              g.guess === guess &&
+              g.turn === room.round &&
+              g.targetIndex === targetIdx,
+          )
+        ) {
+          ack?.({
+            success: false,
+            error: "Already guessed that number against this opponent this round",
+          });
           return;
         }
 
         let hint: "higher" | "lower" | "correct";
-        if (guess === opponent.secret) hint = "correct";
-        else if (guess < opponent.secret) hint = "higher";
+        if (guess === target.secret) hint = "correct";
+        else if (guess < target.secret) hint = "higher";
         else hint = "lower";
 
-        player.guesses.push({ guess, hint, turn: room.round });
+        player.guesses.push({ guess, hint, turn: room.round, targetIndex: targetIdx });
         ack?.({ success: true });
 
         io.to(room.code).emit("game:guessResult", {
           playerIndex: idx,
+          targetIndex: targetIdx,
           guess,
           hint,
           round: room.round,
         });
 
         if (hint === "correct") {
-          void endRound(room, idx as 0 | 1, "correct");
-          return;
+          target.alive = false;
+          io.to(room.code).emit("game:eliminated", {
+            playerIndex: targetIdx,
+            reason: "correct",
+          });
+          const winner = checkRoundWinner(room);
+          if (winner) {
+            void finishRound(room, winner);
+            return;
+          }
         }
 
         clearTurnTimer(room);
-        room.currentTurnIndex = otherIndex(idx as 0 | 1);
-        startTurn(room);
+        const next = findNextAliveIndex(room, idx);
+        if (next === null) return;
+        room.currentTurnIndex = next;
+        beginTurn(room);
       },
     );
 
     socket.on(
       "chat:send",
       (payload: { roomCode: string; message: string }) => {
-        const room = findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
+        const room =
+          findRoomBySocketId(socket.id) ?? getRoom(payload?.roomCode ?? "");
         if (!room) return;
         const player = room.players.find((p) => p?.socketId === socket.id);
         if (!player) return;

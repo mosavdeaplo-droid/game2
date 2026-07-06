@@ -7,15 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ArrowLeft, Send } from "lucide-react";
+import { Loader2, ArrowLeft, Send, Skull } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function Room() {
   const { code } = useParams();
   const [, setLocation] = useLocation();
   const {
-    room, myIndex, guessLog, chat, turn, opponentLeft,
-    leaveRoom, rejoinRoom, setSecret, guess, sendChat, resetMatchState
+    room, myIndex, guessLog, chat, turn, chooseTargetPrompt, opponentLeft,
+    leaveRoom, rejoinRoom, setSecret, chooseTarget, guess, sendChat, resetMatchState
   } = useGame();
   const { t } = useI18n();
   const { toast } = useToast();
@@ -37,18 +37,19 @@ export default function Room() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, room, rejoinRoom, setLocation, toast]);
 
+  const activeEndsAt = turn?.turnEndsAt ?? chooseTargetPrompt?.turnEndsAt ?? null;
   useEffect(() => {
-    if (!turn?.turnEndsAt) return;
+    if (!activeEndsAt) return;
     const interval = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((turn.turnEndsAt - Date.now()) / 1000));
+      const remaining = Math.max(0, Math.ceil((activeEndsAt - Date.now()) / 1000));
       setTimeLeft(remaining);
     }, 100);
     return () => clearInterval(interval);
-  }, [turn?.turnEndsAt]);
+  }, [activeEndsAt]);
 
-  // Falls back to the classic 1-100 range until the room settings arrive.
   const minNumber = room?.settings?.minNumber ?? 1;
   const maxNumber = room?.settings?.maxNumber ?? 100;
+  const isTeams = room?.settings?.mode === "teams";
 
   const handleSetSecret = () => {
     const val = parseInt(secretInput);
@@ -78,9 +79,19 @@ export default function Room() {
     );
   }
 
-  const opponent = myIndex !== null ? room.players[1 - myIndex] : null;
   const me = myIndex !== null ? room.players[myIndex] : null;
   const isMyTurn = turn?.currentTurnIndex === myIndex;
+  const isMyChoiceTurn = chooseTargetPrompt?.currentTurnIndex === myIndex;
+  const currentTurnPlayer =
+    turn !== null
+      ? room.players[turn.currentTurnIndex]
+      : chooseTargetPrompt !== null
+        ? room.players[chooseTargetPrompt.currentTurnIndex]
+        : null;
+  const targetPlayer = turn?.targetIndex != null ? room.players[turn.targetIndex] : null;
+
+  const seatsFilled = room.players.filter((p) => p !== null).length;
+  const seatsTotal = room.players.length;
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground flex flex-col">
@@ -98,26 +109,37 @@ export default function Room() {
       <main className="flex-1 flex flex-col md:flex-row gap-4 p-4 max-w-6xl mx-auto w-full">
         {/* Game Area */}
         <div className="flex-1 flex flex-col gap-4">
-          <Card className="p-4 flex justify-between items-center bg-card/50">
-            <div className="flex items-center gap-2">
-              <div className="font-bold text-primary">{me?.username || t("room.you")}</div>
-              <div className="text-sm px-2 py-1 bg-primary/10 text-primary rounded font-mono">
-                {t("room.wins")}: {me?.roundsWon || 0}
-              </div>
-            </div>
-            <div className="font-black italic text-2xl text-muted-foreground">{t("room.vs")}</div>
-            <div className="flex items-center gap-2 flex-row-reverse">
-              <div className="font-bold text-secondary">{opponent?.username || t("room.waitingLabel")}</div>
-              <div className="text-sm px-2 py-1 bg-secondary/10 text-secondary rounded font-mono">
-                {t("room.wins")}: {opponent?.roundsWon || 0}
-              </div>
+          {/* Player roster */}
+          <Card className="p-3 bg-card/50">
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${seatsTotal}, minmax(0,1fr))` }}>
+              {room.players.map((p, i) => (
+                <div
+                  key={i}
+                  className={`rounded-lg p-2 text-center border
+                    ${i === myIndex ? "border-primary bg-primary/10" : "border-border/50 bg-background/40"}
+                    ${p && !p.alive ? "opacity-40" : ""}
+                    ${isTeams && p?.team === 0 ? "ring-1 ring-blue-500/40" : ""}
+                    ${isTeams && p?.team === 1 ? "ring-1 ring-pink-500/40" : ""}
+                  `}
+                >
+                  <div className="text-xs font-mono truncate">
+                    {p ? (i === myIndex ? t("room.you") : p.username) : t("room.waitingLabel")}
+                  </div>
+                  <div className="text-[10px] font-mono text-muted-foreground flex items-center justify-center gap-1">
+                    {p && !p.alive && <Skull className="w-3 h-3" />}
+                    {t("room.wins")}: {p?.roundsWon ?? 0}
+                  </div>
+                </div>
+              ))}
             </div>
           </Card>
 
           {room.status === "waiting" && (
             <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4">
               <Loader2 className="w-12 h-12 animate-spin text-muted-foreground" />
-              <h2 className="text-2xl font-bold">{t("room.waitingForOpponent")}</h2>
+              <h2 className="text-2xl font-bold">
+                {t("room.waitingRoom")} ({seatsFilled}/{seatsTotal})
+              </h2>
               <p className="font-mono text-muted-foreground">{t("room.shareCode")}: {room.code}</p>
             </div>
           )}
@@ -151,14 +173,56 @@ export default function Room() {
             </div>
           )}
 
+          {room.status === "choosing_target" && chooseTargetPrompt && (
+            <div className="flex-1 flex flex-col items-center justify-center p-8">
+              <div className="mb-4 text-center">
+                <div className="text-sm font-mono text-muted-foreground mb-2">{t("room.round")} {room.round}</div>
+                <div className={`text-6xl font-mono ${timeLeft <= 3 ? 'text-destructive animate-bounce' : ''}`}>
+                  00:{timeLeft.toString().padStart(2, '0')}
+                </div>
+              </div>
+
+              {isMyChoiceTurn ? (
+                <>
+                  <h2 className="text-2xl font-black italic mb-2">{t("room.chooseTarget")}</h2>
+                  <p className="text-muted-foreground mb-6">{t("room.chooseTargetDesc")}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-sm">
+                    {chooseTargetPrompt.validTargets.map((idx) => {
+                      const p = room.players[idx];
+                      if (!p) return null;
+                      return (
+                        <Button
+                          key={idx}
+                          onClick={() => chooseTarget(idx)}
+                          variant="outline"
+                          className="h-16 text-lg font-bold border-primary/30 hover:bg-primary/10 hover:text-primary"
+                        >
+                          {p.username}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="text-xl font-bold text-secondary animate-pulse text-center">
+                  {currentTurnPlayer?.username} — {t("room.chooseTarget")}...
+                </div>
+              )}
+            </div>
+          )}
+
           {room.status === "playing" && (
             <div className="flex-1 flex flex-col items-center p-4">
               <div className="mb-8 text-center">
                 <div className="text-sm font-mono text-muted-foreground mb-2">{t("room.round")} {room.round}</div>
                 {isMyTurn ? (
-                  <div className="text-4xl font-black text-primary animate-pulse">{t("room.yourTurn")}</div>
+                  <div className="text-4xl font-black text-primary animate-pulse">
+                    {t("room.yourTurn")} → {targetPlayer?.username}
+                  </div>
                 ) : (
-                  <div className="text-4xl font-black text-secondary">{t("room.opponentTurn")}</div>
+                  <div className="text-3xl font-black text-secondary">
+                    {currentTurnPlayer?.username} → {myIndex === turn?.targetIndex ? t("room.you") : targetPlayer?.username}
+                  </div>
                 )}
                 <div className={`text-6xl font-mono mt-4 ${timeLeft <= 5 ? 'text-destructive animate-bounce' : ''}`}>
                   00:{timeLeft.toString().padStart(2, '0')}
@@ -188,18 +252,26 @@ export default function Room() {
 
               <ScrollArea className="flex-1 w-full max-w-md mt-8 border rounded-lg bg-card p-4">
                 <div className="space-y-2">
-                  {guessLog.map((log, i) => (
-                    <div key={i} className={`flex items-center gap-4 ${log.playerIndex === myIndex ? 'flex-row' : 'flex-row-reverse'}`}>
-                      <div className={`font-mono text-xl font-bold ${log.playerIndex === myIndex ? 'text-primary' : 'text-secondary'}`}>
-                        {log.guess}
+                  {guessLog.map((log, i) => {
+                    const guesser = room.players[log.playerIndex];
+                    const targeted = room.players[log.targetIndex];
+                    const isMine = log.playerIndex === myIndex;
+                    return (
+                      <div key={i} className={`flex items-center gap-3 ${isMine ? 'flex-row' : 'flex-row-reverse'}`}>
+                        <div className={`font-mono text-xl font-bold ${isMine ? 'text-primary' : 'text-secondary'}`}>
+                          {log.guess}
+                        </div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {guesser?.username} → {targeted?.username}
+                        </div>
+                        <div className={`px-3 py-1 rounded text-sm font-bold uppercase
+                          ${log.hint === 'correct' ? 'bg-green-500/20 text-green-500' : 'bg-muted text-muted-foreground'}
+                        `}>
+                          {log.hint === 'correct' ? t("room.correct") : log.hint === 'higher' ? t("room.higher") : t("room.lower")}
+                        </div>
                       </div>
-                      <div className={`px-3 py-1 rounded text-sm font-bold uppercase
-                        ${log.hint === 'correct' ? 'bg-green-500/20 text-green-500' : 'bg-muted text-muted-foreground'}
-                      `}>
-                        {log.hint === 'correct' ? t("room.correct") : log.hint === 'higher' ? t("room.higher") : t("room.lower")}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </ScrollArea>
             </div>

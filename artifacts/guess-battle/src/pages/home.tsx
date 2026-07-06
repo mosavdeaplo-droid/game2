@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Dialog,
   DialogContent,
@@ -33,15 +34,15 @@ export default function Home() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
 
-  // Custom room settings — defaults match the original 1-100 / best-of-3 game.
+  // Custom room settings — defaults match the original 1v1 / best-of-3 game.
   const [numberRange, setNumberRange] = useState<[number, number]>([1, 100]);
   const [roundsToWin, setRoundsToWin] = useState(2);
+  const [playerCount, setPlayerCount] = useState<2 | 3 | 4>(2);
+  const [mode, setMode] = useState<"ffa" | "teams">("ffa");
 
   useEffect(() => {
     const init = async () => {
-      const deviceId = getOrCreateDeviceId();
       const localIdentity = localStorage.getItem("guess-battle-identity");
-
       if (localIdentity) {
         try {
           const parsed = JSON.parse(localIdentity);
@@ -88,6 +89,8 @@ export default function Home() {
           minNumber: numberRange[0],
           maxNumber: numberRange[1],
           roundsToWin,
+          maxPlayers: playerCount,
+          mode: playerCount === 4 ? mode : ("ffa" as const),
         }
       : undefined;
     const res = await createRoom(settings);
@@ -198,6 +201,48 @@ export default function Home() {
                       <DialogTitle>{t("home.roomSettings")}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-6 py-2">
+                      <div className="space-y-3">
+                        <div className="text-sm font-mono text-muted-foreground">
+                          {t("home.playerCount")}
+                        </div>
+                        <ToggleGroup
+                          type="single"
+                          value={String(playerCount)}
+                          onValueChange={(val) => {
+                            if (!val) return;
+                            const n = Number(val) as 2 | 3 | 4;
+                            setPlayerCount(n);
+                            if (n !== 4) setMode("ffa");
+                          }}
+                          className="grid grid-cols-3 gap-2"
+                        >
+                          <ToggleGroupItem value="2" className="font-mono">1v1</ToggleGroupItem>
+                          <ToggleGroupItem value="3" className="font-mono">1v1v1</ToggleGroupItem>
+                          <ToggleGroupItem value="4" className="font-mono">1v1v1v1</ToggleGroupItem>
+                        </ToggleGroup>
+                      </div>
+
+                      {playerCount === 4 && (
+                        <div className="space-y-3">
+                          <div className="text-sm font-mono text-muted-foreground">
+                            {t("home.gameMode")}
+                          </div>
+                          <ToggleGroup
+                            type="single"
+                            value={mode}
+                            onValueChange={(val) => val && setMode(val as "ffa" | "teams")}
+                            className="grid grid-cols-2 gap-2"
+                          >
+                            <ToggleGroupItem value="ffa" className="text-xs">
+                              {t("home.mode.ffa")}
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value="teams" className="text-xs">
+                              {t("home.mode.teams")}
+                            </ToggleGroupItem>
+                          </ToggleGroup>
+                        </div>
+                      )}
+
                       <div className="space-y-3">
                         <div className="flex justify-between text-sm font-mono text-muted-foreground">
                           <span>{t("home.numberRange")}</span>

@@ -6,33 +6,42 @@ export interface PublicPlayer {
   hasSecret: boolean;
   skipsUsed: number;
   roundsWon: number;
+  team: 0 | 1 | null;
+  alive: boolean;
 }
 
 export type RoomStatus =
   | "waiting"
   | "picking"
+  | "choosing_target"
   | "playing"
   | "round_over"
   | "match_over";
+
+export type RoomMode = "ffa" | "teams";
 
 export interface RoomSettings {
   minNumber: number;
   maxNumber: number;
   roundsToWin: number;
+  maxPlayers: 2 | 3 | 4;
+  mode: RoomMode;
 }
 
 export interface PublicRoom {
   code: string;
   status: RoomStatus;
   round: number;
-  currentTurnIndex: 0 | 1;
+  currentTurnIndex: number;
+  targetIndex: number | null;
   turnEndsAt: number | null;
-  players: [PublicPlayer | null, PublicPlayer | null];
+  players: (PublicPlayer | null)[];
   settings: RoomSettings;
 }
 
 export interface GuessResultEvent {
-  playerIndex: 0 | 1;
+  playerIndex: number;
+  targetIndex: number;
   guess: number;
   hint: "higher" | "lower" | "correct";
   round: number;
@@ -45,25 +54,37 @@ export interface ChatMessageEvent {
 }
 
 export interface TurnEvent {
-  currentTurnIndex: 0 | 1;
+  currentTurnIndex: number;
+  targetIndex: number | null;
   turnEndsAt: number;
   round: number;
 }
 
+export interface ChooseTargetPromptEvent {
+  currentTurnIndex: number;
+  turnEndsAt: number;
+  validTargets: number[];
+  round: number;
+}
+
+export interface EliminatedEvent {
+  playerIndex: number;
+  reason: "correct" | "skips";
+}
+
 export interface SkipEvent {
-  playerIndex: 0 | 1;
+  playerIndex: number;
   skipsUsed: number;
 }
 
 export interface RoundEndEvent {
-  winnerIndex: 0 | 1;
-  reason: "correct" | "skips";
-  scores: [number, number];
+  winnerIndices: number[];
+  scores: number[];
 }
 
 export interface MatchEndEvent {
-  winnerIndex: 0 | 1;
-  scores: [number, number];
+  winnerIndices: number[];
+  scores: number[];
 }
 
 export interface AckResponse {
